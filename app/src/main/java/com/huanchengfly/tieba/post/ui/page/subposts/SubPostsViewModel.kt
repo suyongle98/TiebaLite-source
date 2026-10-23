@@ -2,6 +2,8 @@ package com.huanchengfly.tieba.post.ui.page.subposts
 
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.Stable
+import com.huanchengfly.tieba.post.App
+import com.huanchengfly.tieba.post.R
 import com.huanchengfly.tieba.post.api.TiebaApi
 import com.huanchengfly.tieba.post.api.models.AgreeBean
 import com.huanchengfly.tieba.post.api.models.CommonResponse
@@ -18,6 +20,7 @@ import com.huanchengfly.tieba.post.api.models.protos.updateAgreeStatus
 import com.huanchengfly.tieba.post.api.retrofit.exception.getErrorCode
 import com.huanchengfly.tieba.post.api.retrofit.exception.getErrorMessage
 import com.huanchengfly.tieba.post.arch.BaseViewModel
+import com.huanchengfly.tieba.post.arch.CommonUiEvent
 import com.huanchengfly.tieba.post.arch.ImmutableHolder
 import com.huanchengfly.tieba.post.arch.PartialChange
 import com.huanchengfly.tieba.post.arch.PartialChangeProducer
@@ -52,6 +55,14 @@ class SubPostsViewModel @Inject constructor() :
     override fun dispatchEvent(partialChange: SubPostsPartialChange): UiEvent? =
         when (partialChange) {
             is SubPostsPartialChange.Load.Success -> SubPostsUiEvent.ScrollToSubPosts
+            is SubPostsPartialChange.DeletePost.Success ->
+                SubPostsUiEvent.PostDeleted(partialChange.postId, partialChange.subPostId)
+            is SubPostsPartialChange.DeletePost.Failure -> CommonUiEvent.Toast(
+                App.INSTANCE.getString(
+                    R.string.toast_delete_failure,
+                    "${partialChange.errorCode}: ${partialChange.errorMessage}"
+                )
+            )
             else -> null
         }
 
@@ -209,6 +220,7 @@ sealed interface SubPostsPartialChange : PartialChange<SubPostsUiState> {
 
                 is Success -> oldState.copy(
                     isRefreshing = false,
+                    anti = anti,
                     hasMore = hasMore,
                     currentPage = currentPage,
                     totalPage = totalPage,
@@ -347,11 +359,18 @@ sealed interface SubPostsPartialChange : PartialChange<SubPostsUiState> {
         override fun reduce(oldState: SubPostsUiState): SubPostsUiState = when (this) {
             is Success -> {
                 if (subPostId == null) {
-                    oldState
+                    oldState.copy(
+                        post = null,
+                        postContentRenders = persistentListOf(),
+                        subPosts = persistentListOf(),
+                        totalCount = 0,
+                        hasMore = false,
+                    )
                 } else {
                     oldState.copy(
                         subPosts = oldState.subPosts.filter { it.id != subPostId }
                             .toImmutableList(),
+                        totalCount = (oldState.totalCount - 1).coerceAtLeast(0),
                     )
                 }
             }
@@ -414,4 +433,5 @@ data class SubPostsUiState(
 
 sealed interface SubPostsUiEvent : UiEvent {
     data object ScrollToSubPosts : SubPostsUiEvent
+    data class PostDeleted(val postId: Long, val subPostId: Long?) : SubPostsUiEvent
 }

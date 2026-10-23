@@ -95,6 +95,8 @@ class ReplyViewModel @Inject constructor() :
                     .flatMapConcat { it.producePartialChange() },
                 intentFlow.filterIsInstance<ReplyUiIntent.ToggleIsOriginImage>()
                     .flatMapConcat { it.producePartialChange() },
+                intentFlow.filterIsInstance<ReplyUiIntent.BeginEditing>()
+                    .map { ReplyPartialChange.BeginEditing },
             )
 
         private fun ReplyUiIntent.Send.producePartialChange(): Flow<ReplyPartialChange.Send> {
@@ -165,6 +167,8 @@ class ReplyViewModel @Inject constructor() :
 }
 
 sealed interface ReplyUiIntent : UiIntent {
+    data object BeginEditing : ReplyUiIntent
+
     data class UploadImages(
         val forumName: String,
         val imageUris: List<String>,
@@ -192,15 +196,20 @@ sealed interface ReplyUiIntent : UiIntent {
 }
 
 sealed interface ReplyPartialChange : PartialChange<ReplyUiState> {
+    data object BeginEditing : ReplyPartialChange {
+        override fun reduce(oldState: ReplyUiState): ReplyUiState =
+            if (oldState.isSending || oldState.isUploading) oldState else ReplyUiState()
+    }
+
     sealed class UploadImages : ReplyPartialChange {
         override fun reduce(oldState: ReplyUiState): ReplyUiState = when (this) {
-            is Start -> oldState.copy(isUploading = true)
+            is Start -> oldState.copy(isUploading = true, errorCode = null, errorMessage = null)
             is Success -> oldState.copy(
                 isUploading = false,
                 uploadImageResultList = resultList.toImmutableList()
             )
 
-            is Failure -> oldState.copy(isUploading = false)
+            is Failure -> oldState.copy(isUploading = false, errorCode = errorCode, errorMessage = errorMessage)
         }
 
         object Start : UploadImages()
@@ -216,9 +225,9 @@ sealed interface ReplyPartialChange : PartialChange<ReplyUiState> {
     sealed class Send : ReplyPartialChange {
         override fun reduce(oldState: ReplyUiState): ReplyUiState {
             return when (this) {
-                is Start -> oldState.copy(isSending = true)
-                is Success -> oldState.copy(isSending = false, replySuccess = true)
-                is Failure -> oldState.copy(isSending = false, replySuccess = false)
+                is Start -> oldState.copy(isSending = true, errorCode = null, errorMessage = null)
+                is Success -> oldState.copy(isSending = false, replySuccess = true, errorCode = null, errorMessage = null)
+                is Failure -> oldState.copy(isSending = false, replySuccess = false, errorCode = errorCode, errorMessage = errorMessage)
             }
         }
 
@@ -260,6 +269,8 @@ sealed interface ReplyPartialChange : PartialChange<ReplyUiState> {
 data class ReplyUiState(
     val isSending: Boolean = false,
     val replySuccess: Boolean = false,
+    val errorCode: Int? = null,
+    val errorMessage: String? = null,
     val replyPanelType: ReplyPanelType = ReplyPanelType.NONE,
 
     val isUploading: Boolean = false,

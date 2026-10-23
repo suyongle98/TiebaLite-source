@@ -68,6 +68,10 @@ android {
         }
     }
     buildTypes {
+        debug {
+            applicationIdSuffix = ".localfix"
+            versionNameSuffix = "-reply-fix"
+        }
         all {
             signingConfig =
                 if (signingConfigs.any { it.name == "config" })
@@ -75,6 +79,8 @@ android {
                 else signingConfigs.getByName("debug")
         }
         release {
+            applicationIdSuffix = ".localfix"
+            versionNameSuffix = "-reply-sign-fix"
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(
@@ -86,6 +92,7 @@ android {
             multiDexEnabled = true
         }
     }
+    sourceSets.getByName("release").res.srcDir("src/debug/res")
     composeOptions {
         kotlinCompilerExtensionVersion = "1.5.8"
     }

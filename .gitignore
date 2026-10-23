@@ -63,3 +63,11 @@ fastlane/Preview.html
 fastlane/screenshots
 fastlane/test_output
 fastlane/readme.md
+
+# Source-only distribution: never commit installation packages or signing material
+*.aab
+*.apks
+*.xapk
+*.keystore
+*.p12
+*.pfx

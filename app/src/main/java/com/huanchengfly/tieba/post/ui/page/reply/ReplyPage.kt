@@ -37,6 +37,7 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.Badge
@@ -162,7 +163,7 @@ fun ReplyDialog(
             elevation = 0.dp,
         ) {
             ReplyPageContent(
-                viewModel = pageViewModel(),
+                viewModel = pageViewModel(key = "reply_${args.threadId}_${args.postId}_${args.subPostId}"),
                 onBack = { dismiss() },
                 forumId = args.forumId,
                 forumName = args.forumName,
@@ -203,7 +204,13 @@ internal fun ReplyPageContent(
     }
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
-    val curTbs = remember(tbs) { tbs ?: AccountUtil.getAccountInfo { this.tbs }.orEmpty() }
+    val account = AccountUtil.LocalAccount.current
+    val curTbs = remember(tbs, account) {
+        tbs?.takeIf { it.isNotBlank() } ?: account?.tbs.orEmpty()
+    }
+    LaunchedEffect(viewModel) { viewModel.send(ReplyUiIntent.BeginEditing) }
+    val errorCode by viewModel.uiState.collectPartialAsState(ReplyUiState::errorCode, null)
+    val errorMessage by viewModel.uiState.collectPartialAsState(ReplyUiState::errorMessage, null)
 
     val isUploading by viewModel.uiState.collectPartialAsState(
         prop1 = ReplyUiState::isUploading,
@@ -238,6 +245,15 @@ internal fun ReplyPageContent(
     fun getText(): String {
         return editTextView?.text?.toString().orEmpty()
     }
+
+    fun getReplyContent(): String =
+        if (subPostId != null && subPostId > 0 &&
+            !replyUserPortrait.isNullOrBlank() && !replyUserName.isNullOrBlank()
+        ) {
+            "回复 #(reply, ${replyUserPortrait}, ${replyUserName}) :${getText()}"
+        } else {
+            getText()
+        }
 
     fun setText(text: String) {
         if (editTextView != null) {
@@ -294,6 +310,7 @@ internal fun ReplyPageContent(
     }
 
     var waitUploadSuccessToSend by remember { mutableStateOf(false) }
+    var pendingReplyContent by remember { mutableStateOf("") }
     viewModel.onEvent<ReplyUiEvent.UploadSuccess> {
         if (waitUploadSuccessToSend) {
             waitUploadSuccessToSend = false
@@ -303,7 +320,7 @@ internal fun ReplyPageContent(
                 }
             viewModel.send(
                 ReplyUiIntent.Send(
-                    "${getText()}\n$imageContent",
+                    "$pendingReplyContent\n$imageContent",
                     forumId,
                     forumName,
                     threadId,
@@ -451,6 +468,16 @@ internal fun ReplyPageContent(
             )
         }
         VerticalDivider(modifier = Modifier.padding(horizontal = 16.dp))
+        errorMessage?.let { message ->
+            SelectionContainer {
+                Text(
+                    text = stringResource(R.string.toast_reply_failed, errorCode ?: -1, message),
+                    color = MaterialTheme.colors.error,
+                    style = MaterialTheme.typography.caption,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                )
+            }
+        }
         Box(
             modifier = Modifier
                 .wrapContentHeight()
@@ -579,11 +606,7 @@ internal fun ReplyPageContent(
             } else {
                 IconButton(
                     onClick = {
-                        val replyContent = if (subPostId == null || subPostId == 0L) {
-                            getText()
-                        } else {
-                            "回复 #(reply, ${replyUserPortrait}, ${replyUserName}) :${getText()}"
-                        }
+                        val replyContent = getReplyContent()
                         if (selectedImageList.isEmpty()) {
                             viewModel.send(
                                 ReplyUiIntent.Send(
@@ -598,6 +621,7 @@ internal fun ReplyPageContent(
                                 )
                             )
                         } else {
+                            pendingReplyContent = replyContent
                             waitUploadSuccessToSend = true
                             viewModel.send(
                                 ReplyUiIntent.UploadImages(

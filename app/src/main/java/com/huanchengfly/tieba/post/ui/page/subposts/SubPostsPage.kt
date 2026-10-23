@@ -47,6 +47,8 @@ import com.huanchengfly.tieba.post.api.models.protos.SubPostList
 import com.huanchengfly.tieba.post.api.models.protos.User
 import com.huanchengfly.tieba.post.api.models.protos.bawuType
 import com.huanchengfly.tieba.post.arch.ImmutableHolder
+import com.huanchengfly.tieba.post.arch.GlobalEvent
+import com.huanchengfly.tieba.post.arch.onGlobalEvent
 import com.huanchengfly.tieba.post.arch.collectPartialAsState
 import com.huanchengfly.tieba.post.arch.onEvent
 import com.huanchengfly.tieba.post.arch.pageViewModel
@@ -85,6 +87,9 @@ import com.huanchengfly.tieba.post.utils.DateTimeUtils
 import com.huanchengfly.tieba.post.utils.StringUtil
 import com.huanchengfly.tieba.post.utils.TiebaUtil
 import com.huanchengfly.tieba.post.utils.appPreferences
+import com.huanchengfly.tieba.post.utils.isOwnPost
+import com.huanchengfly.tieba.post.utils.resolvePositiveId
+import com.huanchengfly.tieba.post.toastShort
 import com.ramcosta.composedestinations.annotation.Destination
 import com.ramcosta.composedestinations.navigation.DestinationsNavigator
 import com.ramcosta.composedestinations.spec.DestinationStyleBottomSheet
@@ -106,9 +111,9 @@ fun SubPostsPage(
     ProvideNavigator(navigator) {
         SubPostsContent(
             viewModel = viewModel,
-            forumId = forumId,
+            initialForumId = forumId,
             threadId = threadId,
-            postId = postId,
+            initialPostId = postId,
             subPostId = subPostId,
             loadFromSubPost = loadFromSubPost,
             onNavigateUp = { navigator.navigateUp() }
@@ -132,9 +137,9 @@ fun SubPostsSheetPage(
     ProvideNavigator(navigator) {
         SubPostsContent(
             viewModel = viewModel,
-            forumId = forumId,
+            initialForumId = forumId,
             threadId = threadId,
-            postId = postId,
+            initialPostId = postId,
             subPostId = subPostId,
             loadFromSubPost = loadFromSubPost,
             isSheet = true,
@@ -147,9 +152,9 @@ fun SubPostsSheetPage(
 @Composable
 internal fun SubPostsContent(
     viewModel: SubPostsViewModel,
-    forumId: Long,
+    initialForumId: Long,
     threadId: Long,
-    postId: Long,
+    initialPostId: Long,
     subPostId: Long = 0L,
     loadFromSubPost: Boolean = false,
     isSheet: Boolean = false,
@@ -157,13 +162,14 @@ internal fun SubPostsContent(
 ) {
     val navigator = LocalNavigator.current
     val account = LocalAccount.current
+    val context = LocalContext.current
 
     LazyLoad(key = viewModel, loaded = viewModel.initialized) {
         viewModel.send(
             SubPostsUiIntent.Load(
-                forumId,
+                initialForumId,
                 threadId,
-                postId,
+                initialPostId,
                 subPostId.takeIf { loadFromSubPost } ?: 0L
             )
         )
@@ -214,11 +220,19 @@ internal fun SubPostsContent(
         initial = true
     )
 
+    val forumId = resolvePositiveId(forum?.get { id }, initialForumId)
+    val postId = resolvePositiveId(post?.get { id }, initialPostId)
     val lazyListState = rememberLazyListState()
 
     viewModel.onEvent<SubPostsUiEvent.ScrollToSubPosts> {
         delay(20)
-        lazyListState.scrollToItem(2 + subPosts.indexOfFirst { it.id == subPostId })
+        val index = subPosts.indexOfFirst { it.id == subPostId }
+        if (index >= 0) lazyListState.scrollToItem(2 + index)
+    }
+
+    viewModel.onEvent<SubPostsUiEvent.PostDeleted> {
+        context.toastShort(R.string.toast_delete_success)
+        if (it.subPostId == null) onNavigateUp()
     }
 
     val confirmDeleteDialogState = rememberDialogState()
@@ -227,7 +241,7 @@ internal fun SubPostsContent(
         dialogState = confirmDeleteDialogState,
         onConfirm = {
             if (deleteSubPost == null) {
-                val isSelfPost = post?.get { author_id } == account?.uid?.toLongOrNull()
+                val isSelfPost = isOwnPost(post?.get { author_id }, post?.get { author?.id }, account?.uid?.toLongOrNull())
                 viewModel.send(
                     SubPostsUiIntent.DeletePost(
                         forumId = forumId,
@@ -240,7 +254,7 @@ internal fun SubPostsContent(
                 )
             } else {
                 val isSelfSubPost =
-                    deleteSubPost!!.get { author_id } == account?.uid?.toLongOrNull()
+                    isOwnPost(deleteSubPost!!.get { author_id }, deleteSubPost!!.get { author?.id }, account?.uid?.toLongOrNull())
                 viewModel.send(
                     SubPostsUiIntent.DeletePost(
                         forumId = forumId,
@@ -272,27 +286,24 @@ internal fun SubPostsContent(
         ReplyDialog(args = currentReplyArgs!!, state = replyDialogState)
     }
 
-//    onGlobalEvent<GlobalEvent.ReplySuccess>(
-//        filter = { it.threadId == threadId && it.postId == postId }
-//    ) { event ->
-//        viewModel.send(
-//            SubPostsUiIntent.Load(
-//                forumId,
-//                threadId,
-//                postId,
-//                subPostId.takeIf { loadFromSubPost } ?: 0L
-//            )
-//        )
-//    }
+    onGlobalEvent<GlobalEvent.ReplySuccess>(
+        filter = { it.threadId == threadId && it.postId == postId }
+    ) {
+        viewModel.send(SubPostsUiIntent.Load(forumId, threadId, postId))
+    }
 
     fun showReplyDialog(args: ReplyArgs) {
-        currentReplyArgs = args
+        if (forumId <= 0 || postId <= 0 || args.forumName.isBlank()) {
+            context.toastShort("楼层信息未加载完整，请重新打开楼中楼后重试")
+            return
+        }
+        currentReplyArgs = args.copy(tbs = anti?.get { tbs })
         replyDialogState.show()
     }
 
     StateScreen(
         modifier = Modifier.fillMaxSize(),
-        isEmpty = subPosts.isEmpty(),
+        isEmpty = post == null && subPosts.isEmpty(),
         isError = false,
         isLoading = isRefreshing
     ) {
@@ -421,7 +432,7 @@ internal fun SubPostsContent(
                                 PostCard(
                                     postHolder = it,
                                     contentRenders = postContentRenders,
-                                    canDelete = { it.author_id == account?.uid?.toLongOrNull() },
+                                    canDelete = { isOwnPost(it.author_id, it.author?.id, account?.uid?.toLongOrNull()) },
                                     showSubPosts = false,
                                     onUserClick = {
                                         navigator.navigate(UserProfilePageDestination(it.id))
@@ -486,7 +497,7 @@ internal fun SubPostsContent(
                     ) { index, item ->
                         SubPostItem(
                             item = item,
-                            canDelete = { it.author_id == account?.uid?.toLongOrNull() },
+                            canDelete = { isOwnPost(it.author_id, it.author?.id, account?.uid?.toLongOrNull()) },
                             threadAuthorId = thread?.get { author?.id },
                             onUserClick = {
                                 navigator.navigate(UserProfilePageDestination(it.id))

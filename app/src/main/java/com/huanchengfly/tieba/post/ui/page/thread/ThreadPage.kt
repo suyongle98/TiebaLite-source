@@ -171,6 +171,8 @@ import com.huanchengfly.tieba.post.utils.StringUtil.getShortNumString
 import com.huanchengfly.tieba.post.utils.TiebaUtil
 import com.huanchengfly.tieba.post.utils.Util.getIconColorByLevel
 import com.huanchengfly.tieba.post.utils.appPreferences
+import com.huanchengfly.tieba.post.utils.isOwnPost
+import com.huanchengfly.tieba.post.utils.resolvePositiveId
 import com.ramcosta.composedestinations.annotation.DeepLink
 import com.ramcosta.composedestinations.annotation.Destination
 import com.ramcosta.composedestinations.navigation.DestinationsNavigator
@@ -638,7 +640,7 @@ fun ThreadPage(
         thread?.get { title } ?: ""
     }
     val curForumId = remember(forumId, forum) {
-        forumId ?: forum?.get { id }
+        resolvePositiveId(forum?.get { id }, forumId).takeIf { it > 0 }
     }
     val curForumName = remember(forum) { forum?.get { name } }
     val curTbs = remember(anti) { anti?.get { tbs } }
@@ -788,7 +790,7 @@ fun ThreadPage(
                     )
                 )
             } else {
-                val isSelfPost = deletePost!!.get { author_id } == user.get { id }
+                val isSelfPost = isOwnPost(deletePost!!.get { author_id }, deletePost!!.get { this.author?.id }, user.get { id })
                 viewModel.send(
                     ThreadUiIntent.DeletePost(
                         forumId = curForumId,
@@ -921,7 +923,7 @@ fun ThreadPage(
             subPosts = subPosts,
             threadAuthorId = author?.get { id } ?: 0L,
             blocked = blocked,
-            canDelete = { it.author_id == user.get { id } },
+            canDelete = { isOwnPost(it.author_id, it.author?.id, user.get { id }) },
             immersiveMode = isImmersiveMode,
             isCollected = { it.id == thread?.get { collectMarkPid.toLongOrNull() } },
             onUserClick = {
@@ -941,6 +943,7 @@ fun ThreadPage(
             onReplyClick = {
                 navigator.navigate(
                     ReplyPageDestination(
+                        tbs = curTbs,
                         forumId = curForumId ?: 0,
                         forumName = forum?.get { name } ?: "",
                         threadId = threadId,
@@ -955,6 +958,7 @@ fun ThreadPage(
             onSubPostReplyClick = { post, subPost ->
                 navigator.navigate(
                     ReplyPageDestination(
+                        tbs = curTbs,
                         forumId = curForumId ?: 0,
                         forumName = forum?.get { name } ?: "",
                         threadId = threadId,
@@ -1124,6 +1128,7 @@ fun ThreadPage(
                         onClickReply = {
                             navigator.navigate(
                                 ReplyPageDestination(
+                                    tbs = curTbs,
                                     forumId = curForumId ?: 0,
                                     forumName = forum?.get { name }.orEmpty(),
                                     threadId = threadId,
@@ -1353,6 +1358,7 @@ fun ThreadPage(
                                                     onReplyClick = {
                                                         navigator.navigate(
                                                             ReplyPageDestination(
+                                                                tbs = curTbs,
                                                                 forumId = curForumId ?: 0,
                                                                 forumName = forum?.get { name }
                                                                     .orEmpty(),

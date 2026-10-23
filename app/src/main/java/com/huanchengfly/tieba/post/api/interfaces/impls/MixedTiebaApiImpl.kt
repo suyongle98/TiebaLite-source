@@ -418,7 +418,7 @@ object MixedTiebaApiImpl : ITiebaApi {
                 src = if (isFloor) 3 else 1,
                 isVipDel = if (delMyPost) 0 else 1,
                 deleteMyPost = if (delMyPost) 1 else 0,
-                tbs = tbs
+                tbs = tbs?.takeIf { it.isNotBlank() } ?: AccountUtil.getAccountInfo { this.tbs }
             )
 
     override fun searchPost(

@@ -95,7 +95,10 @@ class ThreadViewModel @Inject constructor() :
             )
 
             is ThreadPartialChange.DeletePost.Failure -> CommonUiEvent.Toast(
-                App.INSTANCE.getString(R.string.toast_delete_failure, partialChange.errorMessage)
+                App.INSTANCE.getString(
+                    R.string.toast_delete_failure,
+                    "${partialChange.errorCode}: ${partialChange.errorMessage}"
+                )
             )
 
             is ThreadPartialChange.DeleteThread.Success -> CommonUiEvent.NavigateUp
@@ -1139,9 +1142,9 @@ sealed interface ThreadPartialChange : PartialChange<ThreadUiState> {
     sealed class DeletePost : ThreadPartialChange {
         override fun reduce(oldState: ThreadUiState): ThreadUiState = when (this) {
             is Success -> {
-                val deletedPostIndex = oldState.data.indexOfFirst { it.post.get { id } == postId }
                 oldState.copy(
-                    data = oldState.data.removeAt(deletedPostIndex),
+                    data = oldState.data.filterNot { it.post.get { id } == postId }.toImmutableList(),
+                    latestPosts = oldState.latestPosts.filterNot { it.post.get { id } == postId }.toImmutableList(),
                 )
             }
 
