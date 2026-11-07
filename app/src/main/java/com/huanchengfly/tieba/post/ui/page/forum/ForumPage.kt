@@ -100,6 +100,8 @@ import com.huanchengfly.tieba.post.ui.page.LocalNavigator
 import com.huanchengfly.tieba.post.ui.page.ProvideNavigator
 import com.huanchengfly.tieba.post.ui.page.destinations.ForumDetailPageDestination
 import com.huanchengfly.tieba.post.ui.page.destinations.ForumSearchPostPageDestination
+import com.huanchengfly.tieba.post.ui.page.destinations.ThreadPageDestination
+import com.huanchengfly.tieba.post.ui.page.reply.NewThreadDialog
 import com.huanchengfly.tieba.post.ui.page.forum.threadlist.ForumThreadListPage
 import com.huanchengfly.tieba.post.ui.page.forum.threadlist.ForumThreadListUiEvent
 import com.huanchengfly.tieba.post.ui.widgets.compose.Avatar
@@ -467,6 +469,23 @@ fun ForumPage(
     }
 
     val unlikeDialogState = rememberDialogState()
+    val newThreadDialogState = rememberDialogState()
+    fun openNewThread() {
+        if (account == null) {
+            context.toastShort(R.string.toast_new_thread_login)
+        } else if ((forumInfo?.get { id } ?: 0L) > 0) {
+            newThreadDialogState.show()
+        }
+    }
+    forumInfo?.get { id }?.takeIf { it > 0 }?.let { forumId ->
+        NewThreadDialog(forumId, forumName, newThreadDialogState) { threadId ->
+            coroutineScope.launch {
+                emitGlobalEvent(ForumThreadListUiEvent.Refresh(false, getSortType(context, forumName)))
+                emitGlobalEvent(ForumThreadListUiEvent.Refresh(true, getSortType(context, forumName)))
+            }
+            navigator.navigate(ThreadPageDestination(threadId, forumId = forumId))
+        }
+    }
 
     LaunchedEffect(forumInfo) {
         if (forumInfo != null) {
@@ -531,6 +550,9 @@ fun ForumPage(
                         forumName = forumName,
                         showTitle = !isShowTopBarArea,
                         menuContent = {
+                            DropdownMenuItem(onClick = { openNewThread(); dismiss() }) {
+                                Text(stringResource(R.string.send_new_thread))
+                            }
                             DropdownMenuItem(
                                 onClick = {
                                     shareForum(context, forumName)
@@ -621,7 +643,7 @@ fun ForumPage(
                                     }
 
                                     else -> {
-                                        context.toastShort(R.string.toast_feature_unavailable)
+                                        openNewThread()
                                     }
                                 }
                             },

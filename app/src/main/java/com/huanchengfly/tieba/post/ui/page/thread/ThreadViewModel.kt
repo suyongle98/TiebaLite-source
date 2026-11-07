@@ -101,7 +101,7 @@ class ThreadViewModel @Inject constructor() :
                 )
             )
 
-            is ThreadPartialChange.DeleteThread.Success -> CommonUiEvent.NavigateUp
+            is ThreadPartialChange.DeleteThread.Success -> ThreadUiEvent.ThreadDeleted
             is ThreadPartialChange.DeleteThread.Failure -> CommonUiEvent.Toast(
                 App.INSTANCE.getString(R.string.toast_delete_failure, partialChange.errorMessage)
             )
@@ -1207,6 +1207,8 @@ data class ThreadUiState(
 ) : UiState
 
 sealed interface ThreadUiEvent : UiEvent {
+    data object ThreadDeleted : ThreadUiEvent
+
     data object ScrollToFirstReply : ThreadUiEvent
 
     data object ScrollToLatestReply : ThreadUiEvent

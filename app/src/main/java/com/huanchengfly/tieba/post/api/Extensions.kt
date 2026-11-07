@@ -97,7 +97,7 @@ fun MyMultipartBody.Part.fileName(): String? {
 }
 
 fun MyMultipartBody.newBuilder(): MyMultipartBody.Builder =
-    MyMultipartBody.Builder(boundary).setType(type)
+    MyMultipartBody.Builder(boundary).setType(type).useKnownLength(useKnownLength)
 
 fun MyMultipartBody.sort(): MyMultipartBody {
     val builder = newBuilder()

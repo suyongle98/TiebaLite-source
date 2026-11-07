@@ -107,6 +107,9 @@ import com.huanchengfly.tieba.post.api.models.protos.bawuType
 import com.huanchengfly.tieba.post.api.models.protos.plainText
 import com.huanchengfly.tieba.post.api.retrofit.exception.getErrorMessage
 import com.huanchengfly.tieba.post.arch.GlobalEvent
+import com.huanchengfly.tieba.post.arch.emitGlobalEventSuspend
+import com.huanchengfly.tieba.post.ui.page.forum.getSortType
+import com.huanchengfly.tieba.post.ui.page.forum.threadlist.ForumThreadListUiEvent
 import com.huanchengfly.tieba.post.arch.ImmutableHolder
 import com.huanchengfly.tieba.post.arch.collectPartialAsState
 import com.huanchengfly.tieba.post.arch.onEvent
@@ -687,6 +690,12 @@ fun ThreadPage(
     viewModel.onEvent<ThreadUiEvent.ScrollToFirstReply> {
         lazyListState.animateScrollToItem(1)
     }
+    viewModel.onEvent<ThreadUiEvent.ThreadDeleted> {
+        context.toastShort(R.string.toast_delete_success)
+        emitGlobalEventSuspend(ForumThreadListUiEvent.Refresh(false, getSortType(context, curForumName.orEmpty())))
+        emitGlobalEventSuspend(ForumThreadListUiEvent.Refresh(true, getSortType(context, curForumName.orEmpty())))
+        navigator.navigateUp()
+    }
     viewModel.onEvent<ThreadUiEvent.ScrollToLatestReply> {
         if (curSortType != ThreadSortType.SORT_TYPE_DESC) {
             lazyListState.animateScrollToItem(2 + data.size)
@@ -778,6 +787,7 @@ fun ThreadPage(
         dialogState = confirmDeleteDialogState,
         onConfirm = {
             curForumId ?: return@ConfirmDialog
+            context.toastShort(R.string.toast_deleting_post)
             if (deletePost == null) {
                 val isSelfThread = author?.get { id } == user.get { id }
                 viewModel.send(

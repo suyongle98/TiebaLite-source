@@ -3,33 +3,22 @@ package com.huanchengfly.tieba.post.components
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import com.huanchengfly.tieba.post.App
-import com.huanchengfly.tieba.post.api.BOUNDARY
-import com.huanchengfly.tieba.post.api.booleanToString
 import com.huanchengfly.tieba.post.api.models.UploadPictureResultBean
 import com.huanchengfly.tieba.post.api.retrofit.RetrofitTiebaApi
-import com.huanchengfly.tieba.post.api.retrofit.body.MyMultipartBody
-import com.huanchengfly.tieba.post.api.retrofit.body.buildMultipartBody
 import com.huanchengfly.tieba.post.api.retrofit.exception.TiebaException
 import com.huanchengfly.tieba.post.api.retrofit.exception.getErrorCode
 import com.huanchengfly.tieba.post.api.retrofit.exception.getErrorMessage
 import com.huanchengfly.tieba.post.utils.ImageUtil
-import com.huanchengfly.tieba.post.utils.MD5Util
 import com.huanchengfly.tieba.post.utils.appPreferences
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.asFlow
-import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.filter
-import kotlinx.coroutines.flow.flatMapConcat
-import kotlinx.coroutines.flow.last
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.onCompletion
 import kotlinx.coroutines.flow.runningFold
 import kotlinx.coroutines.withContext
-import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.File
-import java.io.RandomAccessFile
 
 class ImageUploader(
     private val forumName: String,
@@ -54,9 +43,8 @@ class ImageUploader(
             .map { filePath ->
                 uploadSinglePicture(filePath, isOriginImage)
             }
-            .runningFold<UploadPictureResultBean, MutableList<UploadPictureResultBean>>(initial = mutableListOf()) { list, result ->
-                list.add(result)
-                list
+            .runningFold<UploadPictureResultBean, List<UploadPictureResultBean>>(initial = emptyList()) { list, result ->
+                list + result
             }
             .filter { it.size == filePaths.size }
     }
@@ -68,11 +56,12 @@ class ImageUploader(
         val originFile = File(filePath)
         val fileLength = originFile.length()
         val maxSize = if (isOriginImage) ORIGIN_IMAGE_MAX_SIZE else IMAGE_MAX_SIZE
+        require(!isOriginImage || fileLength <= maxSize) { "原图超过 10 MB，请选择较小图片或取消原图" }
         val tempFile = withContext(Dispatchers.IO) {
             File.createTempFile("temp", ".tmp")
         }
         withContext<Unit>(Dispatchers.IO) {
-            if (isOriginImage && fileLength <= maxSize) {
+            if (isOriginImage) {
                 originFile.copyTo(tempFile, true)
             } else {
                 val bitmap = BitmapFactory.decodeFile(filePath)
@@ -99,7 +88,6 @@ class ImageUploader(
         return tempFile
     }
 
-    @OptIn(ExperimentalCoroutinesApi::class)
     suspend fun uploadSinglePicture(
         filePath: String,
         isOriginImage: Boolean = false,
@@ -112,61 +100,22 @@ class ImageUploader(
         val height = option.outHeight
         check(width > 0 && height > 0) { "图片宽高不正确" }
         val file = compressImage(filePath, isOriginImage)
-        val fileLength = file.length()
-        val maxSize = if (isOriginImage) ORIGIN_IMAGE_MAX_SIZE else IMAGE_MAX_SIZE
-        check(fileLength <= maxSize) { "图片大小超过限制" }
-        val fileMd5 = MD5Util.toMd5(file)
-        val isMultipleChunkSize = fileLength % chunkSize == 0L
-        val totalChunkNum = fileLength / chunkSize + if (isMultipleChunkSize) 0 else 1
-        val picWatermarkType =
-            App.INSTANCE.appPreferences.picWatermarkType ?: PIC_WATER_TYPE_FORUM_NAME
-        val requestBodies = (0 until totalChunkNum).map { chunk ->
-            val isFinish = chunk == totalChunkNum - 1
-            val curChunkSize = if (isFinish) {
-                if (isMultipleChunkSize) {
-                    chunkSize
-                } else {
-                    fileLength % chunkSize
-                }
-            } else {
-                chunkSize
-            }.toInt()
-            val chunkBytes = ByteArray(curChunkSize)
-            withContext(Dispatchers.IO) {
-                RandomAccessFile(file, "r").use {
-                    it.seek(chunk * chunkSize.toLong())
-                    it.read(chunkBytes)
-                }
-            }
-            buildMultipartBody(BOUNDARY) {
-                setType(MyMultipartBody.FORM)
-                addFormDataPart("alt", "json")
-                addFormDataPart("chunkNo", "${chunk + 1}")
-                if (forumName.isNotEmpty()) addFormDataPart("forum_name", forumName)
-                addFormDataPart("groupId", "1")
-                addFormDataPart("height", "$height")
-                addFormDataPart("isFinish", isFinish.booleanToString())
-                addFormDataPart("is_bjh", "0")
-                addFormDataPart("pic_water_type", picWatermarkType)
-                addFormDataPart("resourceId", "$fileMd5$chunkSize")
-                addFormDataPart("saveOrigin", isOriginImage.booleanToString())
-                addFormDataPart("size", "$fileLength")
-                if (forumName.isNotEmpty()) addFormDataPart("small_flow_fname", forumName)
-                addFormDataPart("width", "$width")
-                addFormDataPart("chunk", "file", chunkBytes.toRequestBody())
-            }
+        try {
+            val maxSize = if (isOriginImage) ORIGIN_IMAGE_MAX_SIZE else IMAGE_MAX_SIZE
+            check(file.length() <= maxSize) { "图片大小超过限制" }
+            BitmapFactory.decodeFile(file.path, option)
+            return uploadImageChunks(
+                file, option.outWidth, option.outHeight, forumName, isOriginImage,
+                App.INSTANCE.appPreferences.picWatermarkType ?: PIC_WATER_TYPE_FORUM_NAME,
+                chunkSize,
+            ) { body -> RetrofitTiebaApi.OFFICIAL_TIEBA_API.uploadPicture(body).first() }
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (failure: Exception) {
+            throw UploadPictureFailedException(failure.getErrorCode(), failure.getErrorMessage())
+        } finally {
+            file.delete()
         }
-        return requestBodies.asFlow()
-            .flatMapConcat { RetrofitTiebaApi.OFFICIAL_TIEBA_API.uploadPicture(it) }
-            .catch {
-                throw UploadPictureFailedException(it.getErrorCode(), it.getErrorMessage())
-            }
-            .onCompletion {
-                withContext(Dispatchers.IO) {
-                    file.delete()
-                }
-            }
-            .last()
     }
 }
 

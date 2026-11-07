@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="title_new_thread">发帖到 %1$s 吧</string>
+    <string name="hint_new_thread_title">标题（%1$d/30）</string>
+    <string name="send_new_thread">发布新帖</string>
+    <string name="toast_new_thread_success">发帖成功</string>
+    <string name="toast_new_thread_failed">发帖失败（%1$d）：%2$s</string>
+    <string name="toast_new_thread_login">请先登录后再发帖</string>
+    <string name="toast_images_selected">已添加 %1$d 张图片</string>
+    <string name="toast_image_removed">已移除图片</string>
+    <string name="toast_deleting_post">正在删除…</string>
+</resources>

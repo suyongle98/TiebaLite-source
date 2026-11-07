@@ -25,7 +25,8 @@ fun buildMultipartBody(
 class MyMultipartBody internal constructor(
     private val boundaryByteString: ByteString,
     @get:JvmName("type") val type: MediaType,
-    @get:JvmName("parts") val parts: List<Part>
+    @get:JvmName("parts") val parts: List<Part>,
+    val useKnownLength: Boolean = false,
 ) : RequestBody() {
     private val contentType: MediaType = "$type; boundary=$boundary".toMediaType()
     private var contentLength = -1L
@@ -104,7 +105,7 @@ class MyMultipartBody internal constructor(
             }
 
             val contentLength = body.contentLength()
-            if (countBytes) {
+            if (countBytes && (!useKnownLength || contentLength == -1L)) {
                 // We can't measure the body's size without the sizes of its components.
                 byteCountBuffer!!.clear()
                 return -1L
@@ -177,6 +178,7 @@ class MyMultipartBody internal constructor(
     class Builder @JvmOverloads constructor(boundary: String = UUID.randomUUID().toString()) {
         private val boundary: ByteString = boundary.encodeUtf8()
         private var type = MIXED
+        private var useKnownLength = false
         private val parts = mutableListOf<Part>()
 
         /**
@@ -187,6 +189,8 @@ class MyMultipartBody internal constructor(
             require(type.type == "multipart") { "multipart != $type" }
             this.type = type
         }
+
+        fun useKnownLength(enabled: Boolean = true) = apply { useKnownLength = enabled }
 
         /** Add a part to the body. */
         fun addPart(body: RequestBody) = apply {
@@ -216,7 +220,7 @@ class MyMultipartBody internal constructor(
         /** Assemble the specified parts into a request body. */
         fun build(): MyMultipartBody {
             check(parts.isNotEmpty()) { "Multipart body must have at least one part." }
-            return MyMultipartBody(boundary, type, parts.toImmutableList())
+            return MyMultipartBody(boundary, type, parts.toImmutableList(), useKnownLength)
         }
     }
 

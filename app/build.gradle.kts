@@ -70,7 +70,7 @@ android {
     buildTypes {
         debug {
             applicationIdSuffix = ".localfix"
-            versionNameSuffix = "-reply-fix"
+            versionNameSuffix = "-post-fix-v2"
         }
         all {
             signingConfig =
@@ -80,7 +80,7 @@ android {
         }
         release {
             applicationIdSuffix = ".localfix"
-            versionNameSuffix = "-reply-sign-fix"
+            versionNameSuffix = "-post-fix-v2"
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(

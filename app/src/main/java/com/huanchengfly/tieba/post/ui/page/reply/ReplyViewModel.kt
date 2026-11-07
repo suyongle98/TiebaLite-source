@@ -19,6 +19,7 @@ import com.huanchengfly.tieba.post.arch.UiIntent
 import com.huanchengfly.tieba.post.arch.UiState
 import com.huanchengfly.tieba.post.components.ImageUploader
 import com.huanchengfly.tieba.post.repository.AddPostRepository
+import com.huanchengfly.tieba.post.repository.AddThreadRepository
 import com.huanchengfly.tieba.post.utils.FileUtil
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.collections.immutable.ImmutableList
@@ -62,7 +63,7 @@ class ReplyViewModel @Inject constructor() :
 
         is ReplyPartialChange.Send.Failure -> CommonUiEvent.Toast(
             App.INSTANCE.getString(
-                R.string.toast_reply_failed,
+                if (partialChange.isNewThread) R.string.toast_new_thread_failed else R.string.toast_reply_failed,
                 partialChange.errorCode,
                 partialChange.errorMessage
             )
@@ -87,6 +88,8 @@ class ReplyViewModel @Inject constructor() :
                     .flatMapConcat { it.producePartialChange() },
                 intentFlow.filterIsInstance<ReplyUiIntent.Send>()
                     .flatMapConcat { it.producePartialChange() },
+                intentFlow.filterIsInstance<ReplyUiIntent.SendThread>()
+                    .flatMapConcat { it.producePartialChange() },
                 intentFlow.filterIsInstance<ReplyUiIntent.SwitchPanel>()
                     .flatMapConcat { it.producePartialChange() },
                 intentFlow.filterIsInstance<ReplyUiIntent.AddImage>()
@@ -98,6 +101,14 @@ class ReplyViewModel @Inject constructor() :
                 intentFlow.filterIsInstance<ReplyUiIntent.BeginEditing>()
                     .map { ReplyPartialChange.BeginEditing },
             )
+
+        private fun ReplyUiIntent.SendThread.producePartialChange(): Flow<ReplyPartialChange.Send> =
+            AddThreadRepository.addThread(title, content, forumId, forumName)
+                .map<Long, ReplyPartialChange.Send> {
+                    ReplyPartialChange.Send.Success(it.toString(), "", "")
+                }
+                .onStart { emit(ReplyPartialChange.Send.Start) }
+                .catch { emit(ReplyPartialChange.Send.Failure(it.getErrorCode(), it.getErrorMessage(), isNewThread = true)) }
 
         private fun ReplyUiIntent.Send.producePartialChange(): Flow<ReplyPartialChange.Send> {
             return AddPostRepository
@@ -167,6 +178,13 @@ class ReplyViewModel @Inject constructor() :
 }
 
 sealed interface ReplyUiIntent : UiIntent {
+    data class SendThread(
+        val title: String,
+        val content: String,
+        val forumId: Long,
+        val forumName: String,
+    ) : ReplyUiIntent
+
     data object BeginEditing : ReplyUiIntent
 
     data class UploadImages(
@@ -241,7 +259,8 @@ sealed interface ReplyPartialChange : PartialChange<ReplyUiState> {
 
         data class Failure(
             val errorCode: Int,
-            val errorMessage: String
+            val errorMessage: String,
+            val isNewThread: Boolean = false,
         ) : Send()
     }
 
@@ -252,12 +271,19 @@ sealed interface ReplyPartialChange : PartialChange<ReplyUiState> {
 
     data class AddImage(val imageUris: List<String>) : ReplyPartialChange {
         override fun reduce(oldState: ReplyUiState): ReplyUiState =
-            oldState.copy(selectedImageList = (oldState.selectedImageList + imageUris).toImmutableList())
+            if (imageUris.isEmpty()) oldState else oldState.copy(
+                selectedImageList = (oldState.selectedImageList + imageUris).toImmutableList(),
+                replyPanelType = ReplyPanelType.NONE,
+            )
     }
 
     data class RemoveImage(val imageIndex: Int) : ReplyPartialChange {
         override fun reduce(oldState: ReplyUiState): ReplyUiState =
-            oldState.copy(selectedImageList = (oldState.selectedImageList - oldState.selectedImageList[imageIndex]).toImmutableList())
+            if (imageIndex !in oldState.selectedImageList.indices) oldState else oldState.copy(
+                selectedImageList = oldState.selectedImageList.filterIndexed { index, _ ->
+                    index != imageIndex
+                }.toImmutableList()
+            )
     }
 
     data class ToggleIsOriginImage(val isOriginImage: Boolean) : ReplyPartialChange {

@@ -240,6 +240,7 @@ internal fun SubPostsContent(
     ConfirmDialog(
         dialogState = confirmDeleteDialogState,
         onConfirm = {
+            context.toastShort(R.string.toast_deleting_post)
             if (deleteSubPost == null) {
                 val isSelfPost = isOwnPost(post?.get { author_id }, post?.get { author?.id }, account?.uid?.toLongOrNull())
                 viewModel.send(

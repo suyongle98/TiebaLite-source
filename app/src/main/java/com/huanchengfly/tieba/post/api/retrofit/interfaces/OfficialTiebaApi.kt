@@ -23,6 +23,37 @@ import retrofit2.http.*
 
 
 interface OfficialTiebaApi {
+    @Headers(
+        "${Header.FORCE_LOGIN}: ${Header.FORCE_LOGIN_TRUE}",
+        "${Header.DROP_HEADERS}: ${Header.CHARSET},${Header.CLIENT_TYPE}",
+        "${Header.NO_COMMON_PARAMS}: ${Param.OAID}",
+    )
+    @POST("https://tiebac.baidu.com/c/c/thread/add")
+    @FormUrlEncoded
+    fun addThreadFlow(
+        @Field("title") title: String,
+        @Field("content") content: String,
+        @Field("fid") forumId: String,
+        @Field("kw") forumName: String,
+        @Field("tbs") tbs: String,
+        @Field("anonymous") anonymous: String = "1",
+        @Field("call_from") callFrom: String = "2",
+        @Field("can_no_forum") canNoForum: String = "0",
+        @Field("entrance_type") entranceType: String = "1",
+        @Field("is_ntitle") isNoTitle: String = "0",
+        @Field("is_hide") isHide: String = "0",
+        @Field("is_link_thread") isLinkThread: String = "0",
+        @Field("is_feedback") isFeedback: String = "0",
+        @Field("new_vcode") newVcode: String = "1",
+        @Field("takephoto_num") takePhotoNum: String = "0",
+        @Field("vcode_tag") vcodeTag: String = "12",
+        @Field("name_show") nameShow: String? = AccountUtil.getLoginInfo()?.nameShow,
+        @Field("_client_version") clientVersion: String = "11.10.8.6",
+        @retrofit2.http.Header(Header.USER_AGENT) userAgent: String = "bdtb for Android $clientVersion",
+        @Field("stoken") sToken: String? = AccountUtil.getSToken(),
+        @retrofit2.http.Header("client_user_token") userToken: String? = AccountUtil.getUid(),
+    ): Flow<AddThreadBean>
+
     @POST("/c/f/pb/page")
     @FormUrlEncoded
     fun threadContent(
@@ -480,7 +511,7 @@ interface OfficialTiebaApi {
         "${Header.DROP_HEADERS}: ${Header.CHARSET},${Header.CLIENT_TYPE}",
         "${Header.NO_COMMON_PARAMS}: ${Param.SWAN_GAME_VER},${Param.SDK_VER}",
     )
-    @POST("/c/s/uploadPicture")
+    @POST("https://c.tieba.baidu.com/c/s/uploadPicture")
     fun uploadPicture(
         @Body body: RequestBody,
         @retrofit2.http.Header(Header.COOKIE) cookie: String = "ka=open;BAIDUID=${ClientUtils.baiduId}".takeIf { ClientUtils.baiduId != null }

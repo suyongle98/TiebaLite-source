@@ -173,8 +173,8 @@ object RetrofitTiebaApi {
         )
     }
 
-    val OFFICIAL_TIEBA_API: OfficialTiebaApi by lazy {
-        createJsonApi<OfficialTiebaApi>(
+    private val officialJsonRetrofit: Retrofit by lazy {
+        createJsonRetrofit(
             "http://c.tieba.baidu.com/",
             CommonHeaderInterceptor(
                 Header.USER_AGENT to { "bdtb for Android 12.25.1.0" },
@@ -221,6 +221,19 @@ object RetrofitTiebaApi {
             ),
             stParamInterceptor,
         )
+    }
+
+    val OFFICIAL_TIEBA_API: OfficialTiebaApi by lazy {
+        officialJsonRetrofit.create(OfficialTiebaApi::class.java)
+    }
+
+    val OFFICIAL_TIEBA_WRITE_API: OfficialTiebaApi by lazy {
+        val client = (officialJsonRetrofit.callFactory() as OkHttpClient).newBuilder()
+            .retryOnConnectionFailure(false)
+            .followRedirects(false)
+            .followSslRedirects(false)
+            .build()
+        officialJsonRetrofit.newBuilder().client(client).build().create(OfficialTiebaApi::class.java)
     }
 
     val OFFICIAL_PROTOBUF_TIEBA_API: OfficialProtobufTiebaApi by lazy {
@@ -363,7 +376,12 @@ object RetrofitTiebaApi {
     private inline fun <reified T : Any> createJsonApi(
         baseUrl: String,
         vararg interceptors: Interceptor
-    ) = Retrofit.Builder()
+    ) = createJsonRetrofit(baseUrl, *interceptors).create(T::class.java)
+
+    private fun createJsonRetrofit(
+        baseUrl: String,
+        vararg interceptors: Interceptor
+    ): Retrofit = Retrofit.Builder()
         .baseUrl(baseUrl)
         .addCallAdapterFactory(DeferredCallAdapterFactory())
         .addCallAdapterFactory(FlowCallAdapterFactory.create())
@@ -385,7 +403,6 @@ object RetrofitTiebaApi {
             connectionPool(connectionPool)
         }.build())
         .build()
-        .create(T::class.java)
 
     private inline fun <reified T : Any> createProtobufApi(
         baseUrl: String,

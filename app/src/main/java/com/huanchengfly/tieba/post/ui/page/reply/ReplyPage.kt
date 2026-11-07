@@ -48,6 +48,7 @@ import androidx.compose.material.Icon
 import androidx.compose.material.IconButton
 import androidx.compose.material.LocalTextStyle
 import androidx.compose.material.MaterialTheme
+import androidx.compose.material.OutlinedTextField
 import androidx.compose.material.Surface
 import androidx.compose.material.Text
 import androidx.compose.material.icons.Icons
@@ -66,6 +67,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
@@ -123,6 +125,9 @@ import com.ramcosta.composedestinations.spec.DestinationStyleBottomSheet
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
@@ -180,6 +185,33 @@ fun ReplyDialog(
     }
 }
 
+@Composable
+fun NewThreadDialog(
+    forumId: Long,
+    forumName: String,
+    state: DialogState,
+    onThreadCreated: (Long) -> Unit,
+) {
+    val viewModel: ReplyViewModel = pageViewModel(key = "new_thread_${AccountUtil.getUid()}_$forumId")
+    val uiState by viewModel.uiState.collectAsState()
+    BaseDialog(dialogState = state, imePadding = false,
+        cancelable = !uiState.isSending && !uiState.isUploading,
+        cancelableOnTouchOutside = !uiState.isSending && !uiState.isUploading) {
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp),
+            color = ExtendedTheme.colors.windowBackground,
+        ) {
+            ReplyPageContent(
+                viewModel = viewModel,
+                onBack = { dismiss() }, forumId = forumId, forumName = forumName,
+                threadId = 0, isDialog = true, isNewThread = true,
+                onThreadCreated = onThreadCreated,
+            )
+        }
+    }
+}
+
 @OptIn(
     ExperimentalLayoutApi::class,
     FlowPreview::class
@@ -198,9 +230,12 @@ internal fun ReplyPageContent(
     replyUserPortrait: String? = null,
     tbs: String? = null,
     isDialog: Boolean = false,
+    isNewThread: Boolean = false,
+    onThreadCreated: (Long) -> Unit = {},
 ) {
-    val hash = remember(forumId, threadId, postId, subPostId) {
-        "${threadId}_${postId}_${subPostId}".toMD5()
+    val hash = remember(forumId, threadId, postId, subPostId, isNewThread, AccountUtil.getUid()) {
+        (if (isNewThread) "new_thread_${AccountUtil.getUid()}_$forumId"
+        else "${threadId}_${postId}_${subPostId}").toMD5()
     }
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
@@ -209,6 +244,29 @@ internal fun ReplyPageContent(
         tbs?.takeIf { it.isNotBlank() } ?: account?.tbs.orEmpty()
     }
     LaunchedEffect(viewModel) { viewModel.send(ReplyUiIntent.BeginEditing) }
+    var threadTitle by rememberSaveable(hash) { mutableStateOf("") }
+    var titleLoaded by rememberSaveable(hash) { mutableStateOf(!isNewThread) }
+    var bodyLoaded by remember(hash) { mutableStateOf(!isNewThread) }
+    var published by remember(hash) { mutableStateOf(false) }
+    val draftLock = remember(hash) { Any() }
+    LaunchedEffect(hash) {
+        if (isNewThread && !titleLoaded) {
+            threadTitle = withContext(Dispatchers.IO) {
+                LitePal.where("hash = ?", "${hash}_title").findFirst(Draft::class.java)?.content.orEmpty()
+            }
+            titleLoaded = true
+        }
+    }
+    LaunchedEffect(threadTitle, titleLoaded, published) {
+        if (isNewThread && titleLoaded && !published) {
+            delay(300)
+            withContext(Dispatchers.IO) {
+                synchronized(draftLock) {
+                    if (!published) Draft("${hash}_title", threadTitle).saveOrUpdate("hash = ?", "${hash}_title")
+                }
+            }
+        }
+    }
     val errorCode by viewModel.uiState.collectPartialAsState(ReplyUiState::errorCode, null)
     val errorMessage by viewModel.uiState.collectPartialAsState(ReplyUiState::errorMessage, null)
 
@@ -220,7 +278,11 @@ internal fun ReplyPageContent(
         prop1 = ReplyUiState::isSending,
         initial = false
     )
-    val isReplying by remember { derivedStateOf { isUploading || isSending } }
+    var submissionPending by remember { mutableStateOf(false) }
+    val isReplying by remember { derivedStateOf { submissionPending || isUploading || isSending } }
+    LaunchedEffect(errorCode, errorMessage) {
+        if (errorMessage != null) submissionPending = false
+    }
     val replySuccess by viewModel.uiState.collectPartialAsState(
         prop1 = ReplyUiState::replySuccess,
         initial = false
@@ -244,6 +306,23 @@ internal fun ReplyPageContent(
     var editTextView by remember { mutableStateOf<UndoableEditText?>(null) }
     fun getText(): String {
         return editTextView?.text?.toString().orEmpty()
+    }
+
+    DisposableEffect(hash) {
+        onDispose {
+            if (isNewThread && titleLoaded && bodyLoaded && !published) {
+                val title = threadTitle
+                val content = getText()
+                thread {
+                    synchronized(draftLock) {
+                        if (!published) {
+                            Draft("${hash}_title", title).saveOrUpdate("hash = ?", "${hash}_title")
+                            Draft(hash, content).saveOrUpdate("hash = ?", hash)
+                        }
+                    }
+                }
+            }
+        }
     }
 
     fun getReplyContent(): String =
@@ -282,9 +361,11 @@ internal fun ReplyPageContent(
             .distinctUntilChanged()
             .collect {
                 Log.i("ReplyPage", "collect: $it")
-                if (!replySuccess) {
+                if (!replySuccess && !published && (!isNewThread || bodyLoaded)) {
                     thread {
-                        Draft(hash, it).saveOrUpdate("hash = ?", hash)
+                        synchronized(draftLock) {
+                            if (!published) Draft(hash, it).saveOrUpdate("hash = ?", hash)
+                        }
                     }
                 }
             }
@@ -295,22 +376,40 @@ internal fun ReplyPageContent(
                 if (it != null) {
                     setText(it.content)
                 }
+                bodyLoaded = true
             }
     }
     val textLength by remember { derivedStateOf { curText.length } }
-    val isTextEmpty by remember { derivedStateOf { curText.isEmpty() } }
 
     viewModel.onEvent<ReplyUiEvent.ReplySuccess> {
-        if (it.expInc.isEmpty()) {
+        published = true
+        if (isNewThread) {
+            context.toastShort(R.string.toast_new_thread_success)
+        } else if (it.expInc.isEmpty()) {
             context.toastShort(R.string.toast_reply_success_default)
         } else {
             context.toastShort(R.string.toast_reply_success, it.expInc)
         }
-        LitePal.deleteAllAsync<Draft>("hash = ?", hash).listen { onBack() }
+        withContext(Dispatchers.IO) {
+            synchronized(draftLock) {
+                LitePal.deleteAll(Draft::class.java, "hash = ? OR hash = ?", hash, "${hash}_title")
+            }
+        }
+        onBack()
+        if (isNewThread) onThreadCreated(it.threadId.toLong())
     }
 
     var waitUploadSuccessToSend by remember { mutableStateOf(false) }
     var pendingReplyContent by remember { mutableStateOf("") }
+    var pendingThreadTitle by remember { mutableStateOf("") }
+    fun sendContent(content: String, title: String = threadTitle) {
+        viewModel.send(if (isNewThread) {
+            ReplyUiIntent.SendThread(title, content, forumId, forumName)
+        } else {
+            ReplyUiIntent.Send(content, forumId, forumName, threadId, curTbs,
+                postId, subPostId, replyUserId)
+        })
+    }
     viewModel.onEvent<ReplyUiEvent.UploadSuccess> {
         if (waitUploadSuccessToSend) {
             waitUploadSuccessToSend = false
@@ -318,18 +417,7 @@ internal fun ReplyPageContent(
                 .joinToString("\n") { image ->
                     "#(pic,${image.picId},${image.picInfo.originPic.width},${image.picInfo.originPic.height})"
                 }
-            viewModel.send(
-                ReplyUiIntent.Send(
-                    "$pendingReplyContent\n$imageContent",
-                    forumId,
-                    forumName,
-                    threadId,
-                    curTbs,
-                    postId,
-                    subPostId,
-                    replyUserId,
-                )
-            )
+            sendContent("$pendingReplyContent\n$imageContent", pendingThreadTitle)
         }
     }
 
@@ -433,7 +521,9 @@ internal fun ReplyPageContent(
         }
     }
 
-    val canSend by remember { derivedStateOf { !isTextEmpty || selectedImageList.isNotEmpty() } }
+    val titleLength = threadTitle.trim().codePointCount(0, threadTitle.trim().length)
+    val canSend = (!curText.isBlank() || selectedImageList.isNotEmpty()) &&
+        (!isNewThread || (titleLoaded && bodyLoaded && threadTitle.isNotBlank() && titleLength <= 30))
 
     val textFieldScrollState = rememberScrollState()
 
@@ -457,7 +547,8 @@ internal fun ReplyPageContent(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                text = stringResource(id = R.string.title_reply),
+                text = if (isNewThread) stringResource(R.string.title_new_thread, forumName)
+                    else stringResource(id = R.string.title_reply),
                 modifier = Modifier.weight(1f),
                 fontWeight = FontWeight.Bold
             )
@@ -468,10 +559,22 @@ internal fun ReplyPageContent(
             )
         }
         VerticalDivider(modifier = Modifier.padding(horizontal = 16.dp))
+        if (isNewThread) {
+            OutlinedTextField(
+                value = threadTitle,
+                onValueChange = { threadTitle = it },
+                enabled = titleLoaded && !isReplying,
+                singleLine = true,
+                isError = titleLength > 30,
+                label = { Text(stringResource(R.string.hint_new_thread_title, titleLength)) },
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+            )
+        }
         errorMessage?.let { message ->
             SelectionContainer {
                 Text(
-                    text = stringResource(R.string.toast_reply_failed, errorCode ?: -1, message),
+                    text = stringResource(if (isNewThread) R.string.toast_new_thread_failed
+                        else R.string.toast_reply_failed, errorCode ?: -1, message),
                     color = MaterialTheme.colors.error,
                     style = MaterialTheme.typography.caption,
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
@@ -521,6 +624,7 @@ internal fun ReplyPageContent(
                             }
                         }
                     },
+                    update = { it.isEnabled = !isReplying && (!isNewThread || bodyLoaded) },
                     modifier = Modifier
                         .fillMaxWidth()
                         .wrapContentHeight(align = Alignment.Top)
@@ -550,6 +654,7 @@ internal fun ReplyPageContent(
         ) {
             IconButton(
                 onClick = { switchToPanel(EMOJI) },
+                enabled = !isReplying,
                 modifier = Modifier.size(24.dp)
             ) {
                 Icon(
@@ -561,6 +666,7 @@ internal fun ReplyPageContent(
             if (postId == null || postId == 0L) {
                 IconButton(
                     onClick = { switchToPanel(IMAGE) },
+                    enabled = !isReplying,
                     modifier = Modifier.size(24.dp)
                 ) {
                     BadgedBox(
@@ -606,22 +712,14 @@ internal fun ReplyPageContent(
             } else {
                 IconButton(
                     onClick = {
+                        if (isReplying) return@IconButton
+                        submissionPending = true
                         val replyContent = getReplyContent()
                         if (selectedImageList.isEmpty()) {
-                            viewModel.send(
-                                ReplyUiIntent.Send(
-                                    content = replyContent,
-                                    forumId = forumId,
-                                    forumName = forumName,
-                                    threadId = threadId,
-                                    tbs = curTbs,
-                                    postId = postId,
-                                    subPostId = subPostId,
-                                    replyUserId = replyUserId
-                                )
-                            )
+                            sendContent(replyContent)
                         } else {
                             pendingReplyContent = replyContent
+                            pendingThreadTitle = threadTitle
                             waitUploadSuccessToSend = true
                             viewModel.send(
                                 ReplyUiIntent.UploadImages(
@@ -637,7 +735,8 @@ internal fun ReplyPageContent(
                 ) {
                     Icon(
                         imageVector = Icons.AutoMirrored.Rounded.Send,
-                        contentDescription = stringResource(id = R.string.send_reply),
+                        contentDescription = stringResource(if (isNewThread) R.string.send_new_thread
+                            else R.string.send_reply),
                         modifier = Modifier.size(24.dp)
                     )
                 }
@@ -657,7 +756,7 @@ internal fun ReplyPageContent(
                                 .fillMaxWidth()
                                 .padding(horizontal = 8.dp),
                             onEmoticonClick = { emoticon ->
-                                insertEmoticon("#(${emoticon.name})")
+                                if (!isReplying) insertEmoticon("#(${emoticon.name})")
                             }
                         )
                     }
@@ -666,14 +765,21 @@ internal fun ReplyPageContent(
                         ImagePanel(
                             selectedImages = selectedImageList,
                             onNewImageSelected = { uris ->
-                                viewModel.send(ReplyUiIntent.AddImage(uris.map { it.toString() }))
+                                if (!isReplying && uris.isNotEmpty()) {
+                                    viewModel.send(ReplyUiIntent.AddImage(uris.map { it.toString() }))
+                                    switchToPanel(NONE)
+                                    context.toastShort(R.string.toast_images_selected, uris.size)
+                                }
                             },
                             onRemoveImage = {
-                                viewModel.send(ReplyUiIntent.RemoveImage(it))
+                                if (!isReplying) {
+                                    viewModel.send(ReplyUiIntent.RemoveImage(it))
+                                    context.toastShort(R.string.toast_image_removed)
+                                }
                             },
                             isOriginImage = isOriginImage,
                             onIsOriginImageChange = {
-                                viewModel.send(ReplyUiIntent.ToggleIsOriginImage(it))
+                                if (!isReplying) viewModel.send(ReplyUiIntent.ToggleIsOriginImage(it))
                             },
                             modifier = Modifier
                                 .fillMaxSize()
@@ -754,7 +860,7 @@ internal fun ReplyPageContent(
     }
 
     LaunchedEffect(Unit) {
-        if (context.appPreferences.postOrReplyWarning) {
+        if (!isNewThread && context.appPreferences.postOrReplyWarning) {
             warningDialogState.show()
         }
     }
@@ -842,7 +948,7 @@ private fun ImagePanel(
     onIsOriginImageChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val id = remember { UUID.randomUUID().toString() }
+    val id = rememberSaveable { UUID.randomUUID().toString() }
     val coroutineScope = rememberCoroutineScope()
     onGlobalEvent<GlobalEvent.SelectedImages>(
         coroutineScope,
